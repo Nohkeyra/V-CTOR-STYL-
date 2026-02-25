@@ -16,13 +16,23 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
-    signingConfigs {
-        release {
-            if (System.getenv("KEYSTORE_PATH")) {
-                storeFile file(System.getenv("KEYSTORE_PATH"))
-                storePassword System.getenv("KEYSTORE_PASSWORD")
-                keyAlias System.getenv("KEY_ALIAS")
-                keyPassword System.getenv("KEY_PASSWORD")
+signingConfigs {
+    release {
+        if (System.getenv("KEYSTORE_PASSWORD")) {
+            storeFile file('release-key.jks')
+            storePassword System.getenv("KEYSTORE_PASSWORD")
+            keyAlias System.getenv("KEY_ALIAS")
+            keyPassword System.getenv("KEY_PASSWORD")
+        }
+    }
+}
+
+buildTypes {
+    release {
+        signingConfig signingConfigs.release
+        // ... other config
+    }
+}
             }
         }
     }

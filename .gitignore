@@ -6,3 +6,7 @@ coverage/
 *.log
 .env*
 !.env.example
+android/app/release-key.jks
+android/app/release-key.jks.base64
+icon.png
+splash.png
