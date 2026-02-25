@@ -1,0 +1,6 @@
+{
+	"appId": "com.vector.app",
+	"appName": "Vector",
+	"webDir": "dist",
+	"bundledWebRuntime": false
+}
