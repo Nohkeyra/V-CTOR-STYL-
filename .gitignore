@@ -10,3 +10,6 @@ android/app/release-key.jks
 android/app/release-key.jks.base64
 icon.png
 splash.png
+release-key.b64
+android/app/release-key.b64
+android/app/test.jks
