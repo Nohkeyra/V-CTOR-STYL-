@@ -1,35 +1,39 @@
+export type ImageModel = 'gemini' | 'seedream-5.0' | 'seedream-4.5' | 'seedream-4.0';
+
 export interface ModelInfo {
-  id: string;
+  id: ImageModel;
   label: string;
-  provider: 'google_gemini' | 'huggingface_api' | 'stability_ai' | 'openai';
-  modelId?: string; // For Hugging Face models
+  provider: 'google_gemini' | 'byteplus';
+  modelId?: string; // For BytePlus models
   requiresApiKey: boolean;
 }
 
-export const modelRegistry: Record<string, ModelInfo> = {
+export const modelRegistry: Record<ImageModel, ModelInfo> = {
   'gemini': {
     id: 'gemini',
-    label: 'Gemini',
+    label: 'Gemini 2.5 Flash',
     provider: 'google_gemini',
     requiresApiKey: true,
   },
-  'hidream': {
-    id: 'hidream',
-    label: 'HiDream',
-    provider: 'huggingface_api',
-    modelId: 'digiplay/HiDream-v2',
+  'seedream-5.0': {
+    id: 'seedream-5.0',
+    label: 'Seedream 5.0 Lite',
+    provider: 'byteplus',
+    modelId: 'seedream-5-0-250128',
     requiresApiKey: true,
   },
-  'stability-ai': {
-    id: 'stability-ai',
-    label: 'Stability AI (SDXL)',
-    provider: 'stability_ai',
+  'seedream-4.5': {
+    id: 'seedream-4.5',
+    label: 'Seedream 4.5',
+    provider: 'byteplus',
+    modelId: 'seedream-4-5-251128',
     requiresApiKey: true,
   },
-  'dall-e-3': {
-    id: 'dall-e-3',
-    label: 'DALL-E 3',
-    provider: 'openai',
+  'seedream-4.0': {
+    id: 'seedream-4.0',
+    label: 'Seedream 4.0',
+    provider: 'byteplus',
+    modelId: 'seedream-4-0-250828',
     requiresApiKey: true,
   },
 };

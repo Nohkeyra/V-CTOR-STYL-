@@ -5,10 +5,12 @@
 
 import React, { useState, useRef, useEffect, Suspense, lazy } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { StatusBar, Style } from '@capacitor/status-bar';
+import { Capacitor } from '@capacitor/core';
 import { 
   Upload, 
   Type as TypeIcon, 
-  Grid3X3, 
+  PenTool, 
   Sparkles, 
   Download, 
   Loader2, 
@@ -30,25 +32,31 @@ import {
   Cloud,
   Save,
   MessageCircle,
-  Camera
+  Camera,
+  User,
+  Palette
 } from 'lucide-react';
-import { PRESETS, Preset } from './presets';
+import { VECTOR_PRESETS, TYPOGRAPHY_PRESETS, Preset, PresetCategory } from './presets';
+import { COLOR_PALETTES, ColorPalette } from './colorPalettes';
 
 import { analyzeImage, generateVisual, describeImageSubject } from './services/geminiService';
-import { generateImage, ImageModel } from './services/imageService';
+import { generateImage } from './services/imageService';
 import { getModule } from './modules';
-import { modelRegistry } from './services/modelRegistry';
+import { modelRegistry, ImageModel } from './services/modelRegistry';
 import LightningBolt from './components/LightningBolt';
 import { resizeImage } from './services/imageUtils';
 import { ChatPanel } from './components/ChatPanel';
 import { CameraModal } from './components/CameraModal';
+import { PresetPanel } from './components/PresetPanel';
+import { LOGO_PRESETS } from './modules/LogoModule';
+import { PullToRefresh } from './components/PullToRefresh';
 
 const SettingsPanel = lazy(() => import('./components/Settings').then(m => ({ default: m.Settings })));
 const PresetPreview = lazy(() => import('./components/PresetPreview').then(m => ({ default: m.PresetPreview })));
 const LogsPanel = lazy(() => import('./components/LogsPanel').then(m => ({ default: m.LogsPanel })));
 const GalleryPanel = lazy(() => import('./components/GalleryPanel').then(m => ({ default: m.GalleryPanel })));
 
-type Tab = 'vectorize' | 'core lettering' | 'monogram' | 'image analyzer' | 'chat';
+type Tab = 'vectorize' | 'core lettering' | 'logo design' | 'image analyzer' | 'chat';
 
 interface LogEntry {
   id: string;
@@ -59,22 +67,22 @@ interface LogEntry {
 
 const MODEL_OPTIONS: { id: ImageModel; label: string; icon: React.ElementType; color: string }[] = [
   { id: 'gemini', label: modelRegistry['gemini'].label, icon: Sparkles, color: 'text-blue-400' },
-  { id: 'hidream', label: modelRegistry['hidream'].label, icon: Cloud, color: 'text-indigo-400' },
-  { id: 'stability-ai', label: modelRegistry['stability-ai'].label, icon: Aperture, color: 'text-emerald-400' },
-  { id: 'dall-e-3', label: modelRegistry['dall-e-3'].label, icon: ImageIcon, color: 'text-pink-400' },
+  { id: 'seedream-5.0', label: modelRegistry['seedream-5.0'].label, icon: Zap, color: 'text-yellow-500' },
+  { id: 'seedream-4.5', label: modelRegistry['seedream-4.5'].label, icon: Zap, color: 'text-yellow-500' },
+  { id: 'seedream-4.0', label: modelRegistry['seedream-4.0'].label, icon: Zap, color: 'text-yellow-500' },
 ];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('vectorize');
   const [userInput, setUserInput] = useState('');
   const [selectedPreset, setSelectedPreset] = useState<Preset | null>(null);
-  const [selectedModel, setSelectedModel] = useState<ImageModel>('stability-ai'); // Default to Stability AI
+  const [selectedModel, setSelectedModel] = useState<ImageModel>('gemini');
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [uploadedMimeType, setUploadedMimeType] = useState<string | null>(null);
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [resultImage, setResultImage] = useState<string | null>(null);
+  const [resultImage, setResultImage] = useState<string | string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
@@ -84,6 +92,10 @@ export default function App() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [usedPresets, setUsedPresets] = useState<Set<string>>(new Set());
   const [generationCount, setGenerationCount] = useState(0);
+  const [isStrictModeEnabled, setIsStrictModeEnabled] = useState(false);
+  const [isIllustrated, setIsIllustrated] = useState(false);
+  const [isSubjectOnly, setIsSubjectOnly] = useState(false);
+  const [isBatchMode, setIsBatchMode] = useState(false);
   const [isHoldingCompare, setIsHoldingCompare] = useState(false);
   const [userPresets, setUserPresets] = useState<Preset[]>(() => {
     const saved = localStorage.getItem('userPresets');
@@ -97,6 +109,9 @@ export default function App() {
     return saved ? JSON.parse(saved) : [];
   });
   const [lightningBolts, setLightningBolts] = useState<Array<{ id: string; x: number; y: number; color: string; coreColor?: string; initialAngle: number }>>([]);
+  const [showColorPalette, setShowColorPalette] = useState(false);
+  const [selectedPalette, setSelectedPalette] = useState<ColorPalette | null>(null);
+  const [bottomNavHeight, setBottomNavHeight] = useState(0);
 
   // Multi-key Gemini Free Tier State
   const [geminiKeys, setGeminiKeys] = useState<string[]>(() => {
@@ -107,6 +122,25 @@ export default function App() {
     const saved = localStorage.getItem('activeKeyIndex');
     return saved ? parseInt(saved, 10) : 0;
   });
+
+  // Measure bottom navigation height for proper padding
+  useEffect(() => {
+    const updateBottomNavHeight = () => {
+      const bottomNav = document.querySelector('nav.fixed.bottom-0');
+      if (bottomNav) {
+        setBottomNavHeight(bottomNav.clientHeight);
+      }
+    };
+    
+    updateBottomNavHeight();
+    window.addEventListener('resize', updateBottomNavHeight);
+    window.addEventListener('orientationchange', updateBottomNavHeight);
+    
+    return () => {
+      window.removeEventListener('resize', updateBottomNavHeight);
+      window.removeEventListener('orientationchange', updateBottomNavHeight);
+    };
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('geminiKeys', JSON.stringify(geminiKeys));
@@ -121,9 +155,12 @@ export default function App() {
     return key || process.env.GEMINI_API_KEY;
   };
 
+  const getArkApiKey = () => {
+    return localStorage.getItem('arkApiKey') || '';
+  };
+
   const switchToNextKey = () => {
     const nextIndex = (activeKeyIndex + 1) % geminiKeys.length;
-    // If we've cycled back to the start and the key is empty, we've exhausted all options
     if (nextIndex === 0 && !geminiKeys[0]) {
       return false;
     }
@@ -143,6 +180,13 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (Capacitor.isNativePlatform()) {
+      StatusBar.setOverlaysWebView({ overlay: true }).catch(console.error);
+      StatusBar.setStyle({ style: isDarkMode ? Style.Dark : Style.Light }).catch(console.error);
+    }
+  }, [isDarkMode]);
+
+  useEffect(() => {
     localStorage.setItem('userPresets', JSON.stringify(userPresets));
   }, [userPresets]);
 
@@ -152,6 +196,7 @@ export default function App() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
 
   const addLog = (message: string, type: LogEntry['type'] = 'info') => {
     const newLog: LogEntry = {
@@ -173,39 +218,37 @@ export default function App() {
   }, [logs]);
 
   useEffect(() => {
-    clearLogs(); // Clear any old logs from previous sessions
+    clearLogs();
     addLog('VΞCTOR Engine Initialized', 'success');
     addLog('Mode: Free Tier / Image Generation Only', 'info');
     addLog('Awaiting visual directives...', 'info');
 
     const strikeInterval = setInterval(() => {
-      // Pick an edge: 0=top, 1=right, 2=bottom, 3=left
       const edge = Math.floor(Math.random() * 4);
       let startX, startY, initialAngle;
       
-      if (edge === 0) { // Top
+      if (edge === 0) {
         startX = Math.random() * window.innerWidth;
         startY = 0;
-        initialAngle = 180; // Down
-      } else if (edge === 1) { // Right
+        initialAngle = 180;
+      } else if (edge === 1) {
         startX = window.innerWidth;
         startY = Math.random() * window.innerHeight;
-        initialAngle = 270; // Left
-      } else if (edge === 2) { // Bottom
+        initialAngle = 270;
+      } else if (edge === 2) {
         startX = Math.random() * window.innerWidth;
         startY = window.innerHeight;
-        initialAngle = 0; // Up
-      } else { // Left
+        initialAngle = 0;
+      } else {
         startX = 0;
         startY = Math.random() * window.innerHeight;
-        initialAngle = 90; // Right
+        initialAngle = 90;
       }
 
       const color = isDarkMode ? '#CCFF00' : '#000000';
       const coreColor = isDarkMode ? '#000000' : '#000000';
       const id = Math.random().toString(36).substring(2, 9);
       
-      // Multi-strike effect for "continuous" feel
       const strikes = Math.floor(Math.random() * 3) + 1;
       for (let i = 0; i < strikes; i++) {
         setTimeout(() => {
@@ -220,9 +263,9 @@ export default function App() {
             coreColor,
             initialAngle 
           }]);
-        }, i * 50); // Faster multi-strike
+        }, i * 50);
       }
-    }, Math.random() * 2000 + 8000); // 8-10 seconds
+    }, Math.random() * 2000 + 8000);
 
     return () => clearInterval(strikeInterval);
   }, [isDarkMode]);
@@ -235,17 +278,52 @@ export default function App() {
     }
   }, [isDarkMode]);
 
-  // Auto-select model based on active tab
-  useEffect(() => {
-    if (activeTab === 'vectorize') {
+  const handleModelChange = (modelId: ImageModel) => {
+    if (activeTab === 'logo design' && modelId !== 'gemini') {
+      addLog('Logo Design optimized for Gemini 2.5 Flash. Other models may hallucinate text.', 'info');
+    }
+    setSelectedModel(modelId);
+    const modelName = MODEL_OPTIONS.find(m => m.id === modelId)?.label || modelId;
+    addLog(`Engine switched to: ${modelName}`, 'info');
+  };
+
+  const handleTabChange = (tab: Tab) => {
+    setActiveTab(tab);
+    addLog(`Module activated: ${tab.toUpperCase()}`, 'info');
+    if (!(activeTab === 'image analyzer' && tab === 'vectorize')) {
+      setSelectedPreset(null);
+    }
+
+    if (tab === 'core lettering') {
+      setSelectedModel('seedream-4.5');
+      addLog(`Engine optimized for: Typography Art`, 'info');
+      
+      if (TYPOGRAPHY_PRESETS.length > 0 && TYPOGRAPHY_PRESETS[0].presets.length > 0) {
+        setSelectedPreset(TYPOGRAPHY_PRESETS[0].presets[0]);
+      }
+    } else if (tab === 'logo design') {
       setSelectedModel('gemini');
-    } else if (activeTab === 'core lettering' || activeTab === 'monogram') {
-      setSelectedModel('stability-ai');
-    } else if (activeTab === 'image analyzer') {
-      // Image analyzer doesn't generate, but we can default to Gemini if needed
+      addLog(`Engine optimized for: Logo Design`, 'info');
+
+      if (LOGO_PRESETS.length > 0 && LOGO_PRESETS[0].presets.length > 0) {
+        setSelectedPreset(LOGO_PRESETS[0].presets[0]);
+      }
+    } else if (tab === 'vectorize') {
       setSelectedModel('gemini');
     }
-  }, [activeTab]);
+    setResultImage(null);
+    setError(null);
+  };
+
+  useEffect(() => {
+    if (activeTab === 'vectorize' && selectedModel !== 'gemini') {
+      setSelectedModel('gemini');
+    } else if (activeTab === 'core lettering' && !selectedModel.startsWith('seedream')) {
+      setSelectedModel('seedream-4.5');
+    } else if (activeTab === 'image analyzer' && selectedModel !== 'gemini') {
+      setSelectedModel('gemini');
+    }
+  }, []);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -261,7 +339,7 @@ export default function App() {
           setUploadedMimeType(file.type);
         }
         setError(null);
-        setGenerationCount(0); // Reset count on new image
+        setGenerationCount(0);
       };
       reader.readAsDataURL(file);
     }
@@ -307,8 +385,6 @@ export default function App() {
     e.stopPropagation();
   };
 
-
-
   const handleAnalyze = async () => {
     if (!uploadedImage || !uploadedMimeType) return;
     setIsAnalyzing(true);
@@ -317,7 +393,6 @@ export default function App() {
     try {
       const preset = await analyzeImage(uploadedImage, uploadedMimeType, getActiveGeminiKey());
       
-      // Auto-save the generated preset
       const newPreset = { ...preset, name: `Style ${userPresets.length + 1}` };
       setUserPresets(prev => [newPreset, ...prev]);
       setSelectedPreset(newPreset);
@@ -328,7 +403,6 @@ export default function App() {
       console.error('Analysis failed:', err);
       if (err.message?.includes('429') || err.message?.includes('quota')) {
         if (handleRateLimit()) {
-          // Retry once with new key
           try {
             const preset = await analyzeImage(uploadedImage, uploadedMimeType, getActiveGeminiKey());
             const newPreset = { ...preset, name: `Style ${userPresets.length + 1}` };
@@ -365,7 +439,7 @@ export default function App() {
 
     setIsGenerating(true);
     setError(null);
-    addLog('Synthesizing visual geometry... (ETA: 10-20s)', 'process');
+    addLog('[PROCESS START] Synthesizing visual geometry... (ETA: 10-20s)', 'process');
     addLog(`Applying preset: ${selectedPreset?.name || 'Default'}`, 'info');
     
     try {
@@ -376,47 +450,61 @@ export default function App() {
         negativePrompt: ''
       };
 
-            let prompt = userInput || (activeTab === 'vectorize' ? 'vectorize this image' : 'Artistic Text');
-      if ((activeTab === 'core lettering' || activeTab === 'monogram') && userInput) {
-        // Ensure we don't double-quote if user adds them
-        if (!userInput.startsWith('"') && !userInput.endsWith('"')) {
-             prompt = `"${userInput}"`;
-        }
+      let prompt = userInput || (activeTab === 'vectorize' ? 'vectorize this image' : 'Artistic Text');
+      
+      if (activeTab === 'core lettering' && userInput) {
+        prompt = userInput.replace(/^"+|"+$/g, '');
       }
       
-      const strictMode = generationCount >= 2;
+      const strictMode = isStrictModeEnabled || generationCount >= 2;
 
       if (strictMode && uploadedImage) {
         addLog('High Fidelity Mode Active: Prioritizing reference subject', 'info');
       }
       
-      let result: string | null = null;
-      
       const currentModule = getModule(activeTab);
-      const skipTurbo = currentModule.shouldSkipTurbo({
+      const generationContext = {
         prompt,
         preset: presetToUse,
         base64Image: uploadedImage || undefined,
         mimeType: uploadedMimeType || undefined,
-        strictMode
-      });
+        strictMode,
+        isIllustrated,
+        isSubjectOnly
+      };
 
-      // Use selectedModel if it's not Gemini, and if we shouldn't skip external engines
+      const skipTurbo = currentModule.shouldSkipTurbo(generationContext);
+
+      let finalPrompt = currentModule.constructPrompt(generationContext);
+      let finalNegativePrompt = currentModule.constructNegativePrompt 
+        ? currentModule.constructNegativePrompt(generationContext)
+        : presetToUse.negativePrompt;
+
+      if (selectedPalette && selectedPalette.name !== 'Default') {
+        finalPrompt += ` CRITICAL COLOR INSTRUCTION: Use exactly this color palette: ${selectedPalette.name} (${selectedPalette.colors.join(', ')}). Do NOT use any other colors.`;
+        addLog(`Applying color palette: ${selectedPalette.name}`, 'info');
+      }
+      
+      let result: string | null = null;
+      
       if (selectedModel !== 'gemini' && !skipTurbo) {
         try {
           const engineName = MODEL_OPTIONS.find(m => m.id === selectedModel)?.label || selectedModel;
-          addLog(`Using ${engineName} Engine...`, 'info');
+          if (selectedModel.startsWith('seedream')) {
+            addLog(`Using ${engineName} Engine [ARK Optimized]...`, 'info');
+          } else {
+            addLog(`Using ${engineName} Engine...`, 'info');
+          }
           
-          // ... rest of Turbo logic ...
-          let basePrompt = prompt;
-          if (uploadedImage && uploadedMimeType) {
-             // ... existing subject description logic ...
+          let basePrompt = finalPrompt;
+          if (uploadedImage && uploadedMimeType && activeTab !== 'core lettering' && activeTab !== 'logo design') {
              addLog('Analyzing image subject for vectorization...', 'process');
              try {
                const subjectDescription = await describeImageSubject(uploadedImage, uploadedMimeType);
-               basePrompt = `${prompt}. Subject: ${subjectDescription}`;
+               const poseConstraint = "CRITICAL: Maintain the EXACT original pose, position, and composition of the subject. Do NOT reposition. Apply style with minimal structural adjustment.";
+               basePrompt = `${poseConstraint} Subject: ${subjectDescription}. ${finalPrompt}`;
                if (strictMode) {
-                 basePrompt = `STRICTLY RECREATE this subject: ${subjectDescription}. ${prompt}`;
+                 basePrompt = `${poseConstraint} STRICTLY RECREATE this subject: ${subjectDescription}. ${finalPrompt}`;
                }
                addLog('Subject analysis complete.', 'success');
              } catch (descError) {
@@ -425,47 +513,64 @@ export default function App() {
              }
           }
 
-          // Combine prompt with preset for better results in text-only engine
-          const enhancedPrompt = `${basePrompt}. Style: ${presetToUse.basePrompt}`;
-          result = await generateImage(enhancedPrompt, selectedModel, presetToUse.basePrompt, presetToUse.negativePrompt);
+          const enhancedPrompt = activeTab === 'core lettering' ? basePrompt : `${basePrompt}. Style: ${presetToUse.basePrompt}`;
+          
+          if (isBatchMode) {
+            addLog('Batch Mode Active: Initiating 2x2 parallel synthesis...', 'process');
+            const batchPromises = Array(4).fill(null).map((_, i) => {
+              // Add slight variation to prompt for each batch item to get different results
+              const variationPrompt = `${enhancedPrompt} (variation ${i + 1})`;
+              return generateImage(variationPrompt, selectedModel, presetToUse.basePrompt, finalNegativePrompt, uploadedImage || undefined);
+            });
+            const batchResults = await Promise.all(batchPromises);
+            setResultImage(batchResults);
+            addLog('[PROCESS END] Batch synthesis complete. 4 variations rendered.', 'success');
+            setIsGenerating(false);
+            return;
+          } else {
+            result = await generateImage(enhancedPrompt, selectedModel, presetToUse.basePrompt, finalNegativePrompt, uploadedImage || undefined);
+          }
         } catch (turboError: any) {
-          // ... existing error handling ...
-          console.error(`${selectedModel} failed, falling back to Gemini`, turboError);
+          console.error(`${selectedModel} failed`, turboError);
           addLog(`External Engine unavailable: ${turboError.message}`, 'error');
-          addLog('Falling back to Gemini Engine...', 'info');
-          setSelectedModel('gemini'); // Explicitly set to Gemini for fallback
-          result = null; // Ensure result is null to trigger fallback
+          addLog('Synthesis aborted. Please try again or select a different model.', 'error');
+          setError(`Generation Failed: ${turboError.message}`);
+          setIsGenerating(false);
+          return;
         }
       } else if (skipTurbo && selectedModel !== 'gemini') {
         addLog(`${currentModule.name} Mode: Bypassing External Engines for direct image processing...`, 'info');
       }
       
-      if (!result) {
+      if (!result && (selectedModel === 'gemini' || skipTurbo)) {
         if (selectedModel === 'gemini') {
           addLog('Using Gemini Engine...', 'info');
+        } else {
+          addLog('Switching to Gemini for high-fidelity image processing...', 'info');
         }
         try {
           result = await generateVisual(
-            prompt, 
+            finalPrompt, 
             presetToUse,
             uploadedImage || undefined,
             uploadedMimeType || undefined,
             activeTab,
             strictMode,
-            getActiveGeminiKey()
+            getActiveGeminiKey(),
+            finalNegativePrompt
           );
         } catch (geminiErr: any) {
           if (geminiErr.message?.includes('429') || geminiErr.message?.includes('quota')) {
             if (handleRateLimit()) {
-              // Retry once
               result = await generateVisual(
-                prompt, 
+                finalPrompt, 
                 presetToUse,
                 uploadedImage || undefined,
                 uploadedMimeType || undefined,
                 activeTab,
                 strictMode,
-                getActiveGeminiKey()
+                getActiveGeminiKey(),
+                finalNegativePrompt
               );
             } else {
               throw geminiErr;
@@ -483,11 +588,16 @@ export default function App() {
       if (uploadedImage) {
         setGenerationCount(prev => prev + 1);
       }
-      addLog('Synthesis complete. Image rendered.', 'success');
+      addLog('[PROCESS END] Synthesis complete. Image rendered.', 'success');
     } catch (err: any) {
       let errorMessage = 'An unknown error occurred during synthesis.';
       if (err.message) {
-        if (err.message.includes('API key')) {
+        if (err.message.includes('403') || err.message.includes('permission')) {
+          errorMessage = 'Permission Denied. You may need to select a paid API key for this model.';
+          if (window.aistudio) {
+            window.aistudio.openSelectKey().catch(console.error);
+          }
+        } else if (err.message.includes('API key')) {
           errorMessage = 'Invalid or missing API key. Please check your settings.';
         } else if (err.message.includes('400')) {
           errorMessage = 'The model rejected the prompt. Try a different style or wording.';
@@ -498,7 +608,7 @@ export default function App() {
         }
       }
       setError(errorMessage);
-      addLog(`Synthesis failed: ${errorMessage}`, 'error');
+      addLog(`[PROCESS END] Synthesis failed: ${errorMessage}`, 'error');
     } finally {
       setIsGenerating(false);
     }
@@ -506,12 +616,23 @@ export default function App() {
 
   const saveToGallery = () => {
     if (!resultImage) return;
-    if (galleryImages.includes(resultImage)) {
-      addLog('Image already in gallery', 'info');
-      return;
+    
+    if (Array.isArray(resultImage)) {
+      const newImages = resultImage.filter(img => !galleryImages.includes(img));
+      if (newImages.length === 0) {
+        addLog('All variations already in gallery', 'info');
+        return;
+      }
+      setGalleryImages(prev => [...newImages, ...prev]);
+      addLog(`${newImages.length} variations saved to gallery`, 'success');
+    } else {
+      if (galleryImages.includes(resultImage)) {
+        addLog('Image already in gallery', 'info');
+        return;
+      }
+      setGalleryImages(prev => [resultImage, ...prev]);
+      addLog('Image saved to gallery', 'success');
     }
-    setGalleryImages(prev => [resultImage, ...prev]);
-    addLog('Image saved to gallery', 'success');
   };
 
   const deleteFromGallery = (imageToDelete: string) => {
@@ -521,103 +642,109 @@ export default function App() {
 
   const downloadImage = () => {
     if (!resultImage) return;
-    const link = document.createElement('a');
-    link.href = resultImage;
-    link.download = `vector-${Date.now()}.png`;
-    link.click();
+    if (Array.isArray(resultImage)) {
+      resultImage.forEach((img, i) => {
+        const link = document.createElement('a');
+        link.href = img;
+        link.download = `vector-variation-${i + 1}-${Date.now()}.png`;
+        link.click();
+      });
+      addLog('Downloading all variations...', 'info');
+    } else {
+      const link = document.createElement('a');
+      link.href = resultImage;
+      link.download = `vector-${Date.now()}.png`;
+      link.click();
+    }
   };
 
-  let currentCategory = PRESETS.find(c => {
-    if (activeTab === 'vectorize') return c.category === 'Vector';
-    if (activeTab === 'core lettering') return c.category === 'Typography Art';
-    if (activeTab === 'monogram') return c.category === 'Monogram Art';
-    return false;
-  });
+  const handleAppRefresh = async () => {
+    addLog('System Refresh Initiated...', 'process');
+    // Give it a moment to show the animation
+    await new Promise(resolve => setTimeout(resolve, 800));
+    window.location.reload();
+  };
 
-  if (activeTab === 'image analyzer') {
-    currentCategory = {
-      category: 'User Library',
-      presets: userPresets
-    };
+  let currentCategories: readonly PresetCategory[] = [];
+  if (activeTab === 'vectorize') {
+    currentCategories = VECTOR_PRESETS;
+  } else if (activeTab === 'core lettering') {
+    currentCategories = TYPOGRAPHY_PRESETS;
+  } else if (activeTab === 'logo design') {
+    currentCategories = LOGO_PRESETS;
+  } else if (activeTab === 'image analyzer') {
+    currentCategories = [{ category: 'User Library', presets: userPresets }];
   }
 
-    return (
-    <div 
-      className="min-h-dvh flex flex-col overflow-x-hidden bg-bg-primary text-text-primary font-sans selection:bg-accent selection:text-bg-primary transition-colors duration-500 relative"
-      onDrop={handleFileDrop}
-      onDragEnter={handleDragEnter}
-      onDragLeave={handleDragLeave}
-      onDragOver={handleDragOver}
-    >
-      {lightningBolts.map(bolt => (
-        <LightningBolt 
-          key={bolt.id} 
-          id={bolt.id} 
-          x={bolt.x} 
-          y={bolt.y} 
-          color={bolt.color} 
-          coreColor={bolt.coreColor}
-          initialAngle={bolt.initialAngle}
-          onRemove={(idToRemove) => setLightningBolts(prev => prev.filter(b => b.id !== idToRemove))} 
-        />
-      ))}
-      <AnimatePresence>
-        {isDragging && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute inset-0 z-[100] bg-accent/20 backdrop-blur-sm flex items-center justify-center pointer-events-none"
-          >
-            <div className="text-center text-accent font-bold uppercase tracking-[0.4em] p-8 bg-bg-primary/80 rounded-2xl border-2 border-dashed border-accent">
-              Drop Image to Synthesize
+  return (
+    <PullToRefresh onRefresh={handleAppRefresh}>
+      <div 
+        className="min-h-dvh flex flex-col overflow-x-hidden bg-bg-primary text-text-primary font-sans selection:bg-accent selection:text-bg-primary transition-colors duration-500 relative"
+        onDrop={handleFileDrop}
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+      >
+        {lightningBolts.map(bolt => (
+          <LightningBolt 
+            key={bolt.id} 
+            id={bolt.id} 
+            x={bolt.x} 
+            y={bolt.y} 
+            color={bolt.color} 
+            coreColor={bolt.coreColor}
+            initialAngle={bolt.initialAngle}
+            onRemove={(idToRemove) => setLightningBolts(prev => prev.filter(b => b.id !== idToRemove))} 
+          />
+        ))}
+        <AnimatePresence>
+          {isDragging && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-[100] bg-accent/20 backdrop-blur-sm flex items-center justify-center pointer-events-none"
+            >
+              <div className="text-center text-accent font-bold uppercase tracking-[0.4em] p-8 bg-bg-primary/80 rounded-2xl border-2 border-dashed border-accent">
+                Drop Image to Synthesize
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        {/* Navigation Bar */}
+        <nav 
+          style={{ paddingTop: 'env(safe-area-inset-top)' }}
+          className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-xl border-b border-border-primary px-4 md:px-8 py-4 md:py-5 flex justify-between items-center transition-all"
+        >
+          <div className="flex items-center gap-3 md:gap-5">
+            <motion.div 
+              whileHover={{ scale: 1.1, rotate: 90 }}
+              className="w-10 h-10 md:w-12 md:h-12 bg-accent flex items-center justify-center shadow-xl shadow-accent/20"
+            >
+              <Zap className="text-bg-primary w-6 h-6 md:w-7 md:h-7 fill-current" />
+            </motion.div>
+            <div>
+              <h1 className="text-xl md:text-2xl font-bold tracking-tighter uppercase leading-none">VΞCTOR</h1>
+              <p className="text-[8px] md:text-[10px] font-mono opacity-40 uppercase tracking-[0.2em] mt-1 md:mt-1.5">Monolithic Design System</p>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      {/* Navigation Bar */}
-      <nav className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-xl border-b border-border-primary px-4 md:px-8 py-4 md:py-5 flex justify-between items-center transition-all">
-        <div className="flex items-center gap-3 md:gap-5">
-          <motion.div 
-            whileHover={{ scale: 1.1, rotate: 90 }}
-            className="w-10 h-10 md:w-12 md:h-12 bg-accent flex items-center justify-center shadow-xl shadow-accent/20"
-          >
-            <Zap className="text-bg-primary w-6 h-6 md:w-7 md:h-7 fill-current" />
-          </motion.div>
-          <div>
-            <h1 className="text-xl md:text-2xl font-bold tracking-tighter uppercase leading-none">VΞCTOR</h1>
-            <p className="text-[8px] md:text-[10px] font-mono opacity-40 uppercase tracking-[0.2em] mt-1 md:mt-1.5">Monolithic Design System</p>
           </div>
-        </div>
 
-        <div className="flex items-center gap-4 md:gap-8">
-          <div className="hidden md:flex gap-2 bg-bg-secondary p-1.5 border border-border-primary">
-            {(['vectorize', 'core lettering', 'monogram', 'image analyzer', 'chat'] as Tab[]).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => {
-                  setActiveTab(tab);
-                  if (tab === 'core lettering' || tab === 'monogram') {
-                    setSelectedModel('stability-ai');
-                  } else if (tab === 'vectorize') {
-                    setSelectedModel('gemini');
-                  }
-                  if (!(activeTab === 'image analyzer' && tab === 'vectorize')) {
-                    setSelectedPreset(null);
-                  }
-                  setResultImage(null);
-                  setError(null);
-                }}
-                className={`px-6 lg:px-8 py-2.5 text-[10px] lg:text-[11px] font-bold uppercase tracking-widest transition-all duration-300 ${
-                  activeTab === tab 
-                    ? 'bg-accent text-bg-primary shadow-lg shadow-accent/10' 
-                    : 'text-text-secondary hover:text-text-primary hover:bg-bg-primary'
-                }`}
-              >
-                {tab === 'image analyzer' ? 'analyzer' : tab}
-              </button>
-            ))}
-          </div>
+          <div className="flex items-center gap-4 md:gap-8">
+            <div className="hidden md:flex gap-2 bg-bg-secondary p-1.5 border border-border-primary">
+              {(['vectorize', 'core lettering', 'logo design', 'image analyzer', 'chat'] as Tab[]).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => handleTabChange(tab)}
+                  className={`px-6 lg:px-8 py-2.5 text-[10px] lg:text-[11px] font-bold uppercase tracking-widest transition-all duration-300 ${
+                    activeTab === tab 
+                      ? 'bg-accent text-bg-primary shadow-lg shadow-accent/10' 
+                      : 'text-text-secondary hover:text-text-primary hover:bg-bg-primary'
+                  }`}
+                >
+                  {tab === 'image analyzer' ? 'analyzer' : tab}
+                </button>
+              ))}
+            </div>
             <button
               onClick={() => setShowSettings(true)}
               className="w-10 h-10 md:w-12 md:h-12 flex items-center justify-center rounded-xl md:rounded-2xl bg-bg-secondary border border-border-primary hover:border-accent transition-all duration-300 group"
@@ -646,10 +773,64 @@ export default function App() {
             >
               {isDarkMode ? <Sun size={18} className="text-accent group-hover:rotate-45 transition-transform" /> : <Moon size={18} className="text-accent group-hover:-rotate-12 transition-transform" />}
             </button>
+          </div>
+        </nav>
 
-
-        </div>
-      </nav>
+      <AnimatePresence>
+        {showColorPalette && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[101] bg-bg-primary/80 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => setShowColorPalette(false)}
+          >
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-bg-secondary border border-border-primary rounded-2xl shadow-2xl p-6 max-w-4xl w-full max-h-[80vh] overflow-y-auto flex flex-col"
+            >
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-bold uppercase tracking-widest">Choose Color Palette</h3>
+                <button 
+                  onClick={() => setShowColorPalette(false)}
+                  className="p-2 hover:bg-bg-primary rounded-full transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {COLOR_PALETTES.map((palette, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      setSelectedPalette(palette);
+                      setShowColorPalette(false);
+                      addLog(`Selected palette: ${palette.name}`, 'info');
+                    }}
+                    className={`flex flex-col gap-2 p-3 rounded-xl border transition-all text-left ${selectedPalette?.name === palette.name ? 'border-accent bg-accent/5' : 'border-border-primary hover:border-accent/50 bg-bg-primary'}`}
+                  >
+                    <div className="flex w-full h-12 rounded-lg overflow-hidden">
+                      {palette.colors.map((color, cIdx) => (
+                        <div key={cIdx} className="flex-1 h-full" style={{ backgroundColor: color }} />
+                      ))}
+                    </div>
+                    <div className="flex justify-between items-center px-1">
+                      <span className="text-sm font-medium">{palette.name}</span>
+                      <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${selectedPalette?.name === palette.name ? 'border-accent bg-accent' : 'border-border-primary'}`}>
+                        {selectedPalette?.name === palette.name && <CheckCircle2 size={12} className="text-bg-primary" />}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {showClearConfirm && (
@@ -687,7 +868,14 @@ export default function App() {
         )}
       </AnimatePresence>
 
-            <main className="w-full max-w-screen-2xl mx-auto p-4 sm:p-6 lg:p-8 space-y-6 lg:space-y-8 pb-24 md:pb-12 transition-all duration-300">
+      {/* Main content with dynamic bottom padding to account for mobile navigation */}
+      <main 
+        ref={mainRef}
+        className="w-full max-w-screen-2xl mx-auto p-4 sm:p-6 lg:p-8 space-y-6 lg:space-y-8 transition-all duration-300 flex-1"
+        style={{ 
+          paddingBottom: `calc(${bottomNavHeight}px + 1rem + env(safe-area-inset-bottom))` 
+        }}
+      >
         <AnimatePresence mode="wait">
           {showSettings && (
             <motion.div
@@ -703,6 +891,10 @@ export default function App() {
                 setGeminiKeys={setGeminiKeys}
                 activeKeyIndex={activeKeyIndex}
                 setActiveKeyIndex={setActiveKeyIndex}
+                galleryImages={galleryImages}
+                setGalleryImages={setGalleryImages}
+                userPresets={userPresets}
+                setUserPresets={setUserPresets}
               />
             </motion.div>
           )}
@@ -724,7 +916,6 @@ export default function App() {
             </motion.div>
           )}
         </AnimatePresence>
-
 
         <AnimatePresence mode="wait">
           {showLogs && (
@@ -755,9 +946,9 @@ export default function App() {
               className="w-full flex justify-center py-4 md:py-8"
             >
               <ChatPanel 
-                onClose={() => setActiveTab('vectorize')}
+                onClose={() => handleTabChange('vectorize')}
                 addLog={addLog}
-                apiKey={getActiveGeminiKey()}
+                apiKey={getArkApiKey()}
               />
             </motion.div>
           ) : (
@@ -779,47 +970,79 @@ export default function App() {
                      style={{ backgroundImage: 'linear-gradient(var(--border-primary) 1px, transparent 1px), linear-gradient(90deg, var(--border-primary) 1px, transparent 1px)', backgroundSize: '40px 40px' }}></div>
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,var(--accent)_0%,transparent_70%)] opacity-[0.02] pointer-events-none" />
                 
+                {/* Model Engine Indicator */}
+                <div className="absolute bottom-4 right-4 z-40 pointer-events-none">
+                  <div className="flex items-center gap-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10">
+                    <div className={`w-1.5 h-1.5 rounded-full ${MODEL_OPTIONS.find(m => m.id === selectedModel)?.color.replace('text-', 'bg-') || 'bg-accent'}`} />
+                    <span className="text-[9px] font-mono text-white/60 uppercase tracking-widest">
+                      ENGINE: {MODEL_OPTIONS.find(m => m.id === selectedModel)?.label || selectedModel}
+                    </span>
+                  </div>
+                </div>
+
                 {/* Floating Utility Icons */}
-                {(resultImage || uploadedImage) && !isGenerating && (
-                  <div className="absolute top-4 right-4 z-50 flex gap-2">
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const link = document.createElement('a');
-                        link.href = resultImage || uploadedImage!;
-                        link.download = resultImage ? `vector-${Date.now()}.png` : `reference-${Date.now()}.png`;
-                        link.click();
-                      }}
-                      className="w-8 h-8 md:w-10 md:h-10 bg-black/80 backdrop-blur-md border border-white/20 rounded-lg flex items-center justify-center text-white hover:bg-accent hover:text-black transition-all shadow-lg"
-                      title="Download Image"
-                    >
-                      <Download size={16} />
-                    </button>
-                    {resultImage && (
+                <div className="absolute top-4 right-4 z-50 flex gap-2">
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowColorPalette(true);
+                    }}
+                    className="w-8 h-8 md:w-10 md:h-10 bg-black/80 backdrop-blur-md border border-white/20 rounded-lg flex items-center justify-center text-white hover:bg-accent hover:text-black transition-all shadow-lg"
+                    title="Color Palette"
+                  >
+                    <Palette size={16} />
+                  </button>
+                  {(resultImage || uploadedImage) && !isGenerating && (
+                    <>
                       <button 
                         onClick={(e) => {
                           e.stopPropagation();
-                          saveToGallery();
+                          if (Array.isArray(resultImage)) {
+                            resultImage.forEach((img, i) => {
+                              const link = document.createElement('a');
+                              link.href = img;
+                              link.download = `vector-variation-${i + 1}-${Date.now()}.png`;
+                              link.click();
+                            });
+                            addLog('Downloading all variations...', 'info');
+                          } else {
+                            const link = document.createElement('a');
+                            link.href = resultImage || uploadedImage!;
+                            link.download = resultImage ? `vector-${Date.now()}.png` : `reference-${Date.now()}.png`;
+                            link.click();
+                          }
                         }}
-                        className="w-8 h-8 md:w-10 md:h-10 bg-black/80 backdrop-blur-md border border-white/20 rounded-lg flex items-center justify-center text-white hover:bg-blue-500 transition-all shadow-lg"
-                        title="Save to Gallery"
+                        className="w-8 h-8 md:w-10 md:h-10 bg-black/80 backdrop-blur-md border border-white/20 rounded-lg flex items-center justify-center text-white hover:bg-accent hover:text-black transition-all shadow-lg"
+                        title="Download Image"
                       >
-                        <Save size={16} />
+                        <Download size={16} />
                       </button>
-                    )}
-                    
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowClearConfirm(true);
-                      }}
-                      className="w-8 h-8 md:w-10 md:h-10 bg-black/80 backdrop-blur-md border border-white/20 rounded-lg flex items-center justify-center text-white hover:bg-red-500 hover:text-white transition-all shadow-lg"
-                      title="Clear Canvas"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                )}
+                      {resultImage && (
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            saveToGallery();
+                          }}
+                          className="w-8 h-8 md:w-10 md:h-10 bg-black/80 backdrop-blur-md border border-white/20 rounded-lg flex items-center justify-center text-white hover:bg-blue-500 transition-all shadow-lg"
+                          title="Save to Gallery"
+                        >
+                          <Save size={16} />
+                        </button>
+                      )}
+                      
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowClearConfirm(true);
+                        }}
+                        className="w-8 h-8 md:w-10 md:h-10 bg-black/80 backdrop-blur-md border border-white/20 rounded-lg flex items-center justify-center text-white hover:bg-red-500 hover:text-white transition-all shadow-lg"
+                        title="Clear Canvas"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </>
+                  )}
+                </div>
 
                 <AnimatePresence mode="wait">
                   {isGenerating ? (
@@ -846,34 +1069,79 @@ export default function App() {
                       key="result"
                       initial={{ opacity: 0, scale: 0.95 }}
                       animate={{ opacity: 1, scale: 1 }}
-                      className="relative z-10 w-full h-full cursor-crosshair flex items-center justify-center"
-                      onMouseDown={() => uploadedImage && setIsHoldingCompare(true)}
+                      className="relative z-10 w-full h-full cursor-crosshair flex items-center justify-center p-4"
+                      onMouseDown={() => uploadedImage && !Array.isArray(resultImage) && setIsHoldingCompare(true)}
                       onMouseUp={() => setIsHoldingCompare(false)}
                       onMouseLeave={() => setIsHoldingCompare(false)}
-                      onTouchStart={() => uploadedImage && setIsHoldingCompare(true)}
+                      onTouchStart={() => uploadedImage && !Array.isArray(resultImage) && setIsHoldingCompare(true)}
                       onTouchEnd={() => setIsHoldingCompare(false)}
                     >
-                      <img 
-                        src={isHoldingCompare && uploadedImage ? uploadedImage : resultImage} 
-                        alt="Result" 
-                        className="max-w-full max-h-full h-auto object-contain bg-black/5 pointer-events-none select-none" 
-                      />
-                      
-                      {/* Comparison Indicator */}
-                      {uploadedImage && (
-                        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full text-[10px] font-mono text-white/80 uppercase tracking-widest pointer-events-none border border-white/10">
-                          {isHoldingCompare ? 'Original Reference' : 'Hold to Compare'}
+                      {Array.isArray(resultImage) ? (
+                        <div className="grid grid-cols-2 gap-2 w-full h-full max-h-[80vh]">
+                          {resultImage.map((img, idx) => (
+                            <div key={idx} className="relative group/item overflow-hidden rounded-xl border border-white/10 bg-black/20">
+                              <img 
+                                src={img} 
+                                alt={`Variation ${idx + 1}`} 
+                                className="w-full h-full object-contain" 
+                              />
+                              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/item:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setResultImage(img);
+                                    addLog(`Variation ${idx + 1} selected as primary.`, 'success');
+                                  }}
+                                  className="p-2 bg-accent text-bg-primary rounded-lg hover:scale-110 transition-transform"
+                                  title="Select as Primary"
+                                >
+                                  <Maximize2 size={16} />
+                                </button>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const link = document.createElement('a');
+                                    link.href = img;
+                                    link.download = `vector-variation-${idx + 1}-${Date.now()}.png`;
+                                    link.click();
+                                  }}
+                                  className="p-2 bg-white/10 text-white rounded-lg hover:bg-white/20 transition-colors"
+                                  title="Download Variation"
+                                >
+                                  <Download size={16} />
+                                </button>
+                              </div>
+                              <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-md px-2 py-0.5 rounded text-[8px] font-mono text-white/60 uppercase tracking-widest border border-white/10">
+                                Var_{idx + 1}
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                      )}
+                      ) : (
+                        <>
+                          <img 
+                            src={isHoldingCompare && uploadedImage ? uploadedImage : resultImage} 
+                            alt="Result" 
+                            className="max-w-full max-h-full h-auto object-contain bg-black/5 pointer-events-none select-none" 
+                          />
+                          
+                          {/* Comparison Indicator */}
+                          {uploadedImage && (
+                            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full text-[10px] font-mono text-white/80 uppercase tracking-widest pointer-events-none border border-white/10">
+                              {isHoldingCompare ? 'Original Reference' : 'Hold to Compare'}
+                            </div>
+                          )}
 
-                      <div className={`absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent transition-opacity duration-700 flex flex-col justify-end p-8 md:p-12 backdrop-blur-[2px] pointer-events-none ${isHoldingCompare ? 'opacity-0' : 'opacity-0 group-hover/viewport:opacity-100'}`}>
-                        <div className="space-y-2">
-                          <p className="text-[10px] font-mono text-accent uppercase tracking-[0.4em] mb-2">Synthesis Complete</p>
-                          <h3 className="text-2xl md:text-4xl font-bold text-white uppercase tracking-tighter italic font-serif">
-                            {selectedPreset?.name || 'Custom Construction'}
-                          </h3>
-                        </div>
-                      </div>
+                          <div className={`absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent transition-opacity duration-700 flex flex-col justify-end p-8 md:p-12 backdrop-blur-[2px] pointer-events-none ${isHoldingCompare ? 'opacity-0' : 'opacity-0 group-hover/viewport:opacity-100'}`}>
+                            <div className="space-y-2">
+                              <p className="text-[10px] font-mono text-accent uppercase tracking-[0.4em] mb-2">Synthesis Complete</p>
+                              <h3 className="text-2xl md:text-4xl font-bold text-white uppercase tracking-tighter italic font-serif">
+                                {selectedPreset?.name || 'Custom Construction'}
+                              </h3>
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </motion.div>
                   ) : (
                     <motion.div 
@@ -933,8 +1201,71 @@ export default function App() {
                 </AnimatePresence>
               </motion.div>
 
-              {/* Synthesis Trigger: Sidebar on Desktop */}
-              <div className="w-full lg:w-[380px] xl:w-[420px] flex-shrink-0 flex flex-col order-2 transition-all duration-300">
+              {/* Synthesis Trigger: Full Width */}
+              <div className="w-full flex-shrink-0 flex flex-col order-2 transition-all duration-300">
+                {/* Toggles Row */}
+                <div className="flex items-center justify-between px-6 py-3 mb-4 bg-bg-secondary border border-border-primary rounded-full shadow-lg">
+                  {/* Strict Mode Toggle */}
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setIsStrictModeEnabled(!isStrictModeEnabled)}
+                      className={`w-8 h-4 rounded-full relative transition-all duration-300 ${isStrictModeEnabled ? 'bg-accent' : 'bg-bg-secondary border border-border-primary'}`}
+                      title="High Fidelity Tracking"
+                    >
+                      <motion.div 
+                        animate={{ x: isStrictModeEnabled ? 16 : 2 }}
+                        className={`absolute top-0.5 w-2.5 h-2.5 rounded-full ${isStrictModeEnabled ? 'bg-bg-primary' : 'bg-text-secondary'}`}
+                      />
+                    </button>
+                    <span className="text-[8px] font-bold uppercase tracking-widest opacity-60">Hi-Fi</span>
+                  </div>
+
+                  {/* Illustrated Toggle */}
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setIsIllustrated(!isIllustrated)}
+                      className={`w-8 h-4 rounded-full relative transition-all duration-300 ${isIllustrated ? 'bg-purple-500' : 'bg-bg-secondary border border-border-primary'}`}
+                      title="Illustrated Finish"
+                    >
+                      <motion.div 
+                        animate={{ x: isIllustrated ? 16 : 2 }}
+                        className={`absolute top-0.5 w-2.5 h-2.5 rounded-full ${isIllustrated ? 'bg-bg-primary' : 'bg-text-secondary'}`}
+                      />
+                    </button>
+                    <span className="text-[8px] font-bold uppercase tracking-widest opacity-60">Illust</span>
+                  </div>
+
+                  {/* Subject Only Toggle */}
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setIsSubjectOnly(!isSubjectOnly)}
+                      className={`w-8 h-4 rounded-full relative transition-all duration-300 ${isSubjectOnly ? 'bg-green-500' : 'bg-bg-secondary border border-border-primary'}`}
+                      title="Subject Isolation"
+                    >
+                      <motion.div 
+                        animate={{ x: isSubjectOnly ? 16 : 2 }}
+                        className={`absolute top-0.5 w-2.5 h-2.5 rounded-full ${isSubjectOnly ? 'bg-bg-primary' : 'bg-text-secondary'}`}
+                      />
+                    </button>
+                    <span className="text-[8px] font-bold uppercase tracking-widest opacity-60">Subject</span>
+                  </div>
+
+                  {/* Batch Mode Toggle */}
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setIsBatchMode(!isBatchMode)}
+                      className={`w-8 h-4 rounded-full relative transition-all duration-300 ${isBatchMode ? 'bg-orange-500' : 'bg-bg-secondary border border-border-primary'}`}
+                      title="2x2 Batch Synthesis"
+                    >
+                      <motion.div 
+                        animate={{ x: isBatchMode ? 16 : 2 }}
+                        className={`absolute top-0.5 w-2.5 h-2.5 rounded-full ${isBatchMode ? 'bg-bg-primary' : 'bg-text-secondary'}`}
+                      />
+                    </button>
+                    <span className="text-[8px] font-bold uppercase tracking-widest opacity-60">Batch</span>
+                  </div>
+                </div>
+
                 <motion.div 
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -966,18 +1297,20 @@ export default function App() {
                       {MODEL_OPTIONS.map((model) => (
                         <button
                           key={model.id}
-                          onClick={() => setSelectedModel(model.id)}
-                          className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-300 relative group/model ${
+                          onClick={() => handleModelChange(model.id)}
+                          className={`w-8 h-8 flex items-center justify-center transition-all duration-300 relative group/model ${
                             selectedModel === model.id 
-                              ? `bg-bg-primary/80 backdrop-blur-sm border border-white/10 shadow-[0_0_15px_rgba(0,0,0,0.5)] scale-110 ${model.color}` 
-                              : 'text-text-secondary opacity-40 hover:opacity-100 hover:scale-105 hover:bg-bg-primary/40'
+                              ? `scale-125 ${model.color}` 
+                              : 'text-text-secondary opacity-40 hover:opacity-100 hover:scale-110'
                           }`}
                           title={model.label}
                         >
                           <model.icon 
-                            size={16} 
+                            size={18} 
                             className={`transition-all duration-300 ${
-                              selectedModel === model.id ? 'filter drop-shadow-[0_0_8px_currentColor]' : ''
+                              selectedModel === model.id 
+                                ? 'filter drop-shadow-[0_0_12px_currentColor] drop-shadow-[0_0_4px_currentColor]' 
+                                : ''
                             }`} 
                           />
                           
@@ -989,6 +1322,7 @@ export default function App() {
                           {/* Tooltip */}
                           <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-black/80 backdrop-blur-md text-white text-[9px] font-bold uppercase tracking-widest rounded-lg opacity-0 group-hover/model:opacity-100 transition-opacity pointer-events-none whitespace-nowrap border border-white/10 shadow-xl">
                             {model.label}
+                            {model.id.startsWith('seedream') && <span className="block text-[7px] text-accent mt-0.5">ARK ENGINE</span>}
                           </div>
                         </button>
                       ))}
@@ -1011,7 +1345,7 @@ export default function App() {
                     
                     <button
                       onClick={handleGenerate}
-                      disabled={isGenerating || (activeTab !== 'vectorize' && !selectedPreset)}
+                      disabled={isGenerating || (activeTab !== 'vectorize' && activeTab !== 'logo design' && !selectedPreset)}
                       className="flex-[2] bg-accent text-bg-primary py-4 text-sm font-bold uppercase tracking-[0.4em] flex items-center justify-center gap-3 hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {isGenerating ? <Loader2 className="animate-spin w-5 h-5" /> : <Zap size={20} className="fill-current" />}
@@ -1024,8 +1358,6 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {/* Settings Modal - Removed (Moved to top) */}
-
         {/* Library: Presets at Bottom */}
         <AnimatePresence>
           {activeTab !== 'chat' && (
@@ -1036,91 +1368,36 @@ export default function App() {
               transition={{ delay: 0.2 }}
               className="space-y-6"
             >
-              <div className="flex items-center justify-between px-2">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-accent/10 flex items-center justify-center">
-                    <MousePointer2 size={16} className="text-accent" />
-                  </div>
-                  <h2 className="text-xs font-bold uppercase tracking-[0.2em] opacity-60">Style Matrix</h2>
-                </div>
-                <div className="text-[10px] font-mono opacity-40 uppercase tracking-widest">
-                  {currentCategory?.presets.length} Modules Active
-                </div>
-              </div>
-              
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 pb-8 px-2">
-                {currentCategory?.presets.map((preset) => {
-                  const isUsed = usedPresets.has(preset.name);
-                  const isSelected = selectedPreset?.name === preset.name;
-                  
-                  return (
-                    <button
-                      key={preset.name}
-                      onClick={() => setSelectedPreset(preset)}
-                      className={`p-2.5 rounded-2xl border transition-all flex items-center gap-3 group w-full relative overflow-hidden ${
-                        isSelected
-                          ? 'bg-bg-secondary border-accent shadow-lg shadow-accent/10'
-                          : 'bg-bg-secondary border-border-primary hover:border-accent/50'
-                      }`}
-                    >
-                      <div className={`w-12 h-12 rounded-lg overflow-hidden relative bg-bg-primary flex-shrink-0`}>
-                        <PresetPreview 
-                          name={preset.name} 
-                          category={
-                            currentCategory?.category === 'Typography Art' ? 'lettering' :
-                            currentCategory?.category === 'Monogram Art' ? 'monogram' :
-                            'vector'
-                          } 
-                          isSelected={isSelected} 
-                        />
-                        {isSelected && (
-                          <div className="absolute inset-0 border-2 border-accent rounded-lg pointer-events-none z-20" />
-                        )}
-                      </div>
-                      
-                      <div className="flex-grow text-left">
-                        <span className={`text-[10px] font-bold uppercase tracking-wider truncate ${isSelected ? 'text-accent' : 'text-text-primary'}`}>
-                          {preset.name}
-                        </span>
-                      </div>
-                      {isUsed && (
-                        <CheckCircle2 size={12} className="text-accent flex-shrink-0 mr-2" />
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
+              <PresetPanel
+                categories={currentCategories}
+                selectedPreset={selectedPreset}
+                onSelectPreset={setSelectedPreset}
+                previewCategory={
+                  activeTab === 'core lettering' ? 'lettering' :
+                  activeTab === 'logo design' ? 'logo design' :
+                  'vector'
+                }
+                usedPresets={usedPresets}
+              />
             </motion.div>
           )}
         </AnimatePresence>
       </main>
 
       {/* Bottom Navigation Bar for Mobile */}
-      <nav className="fixed bottom-0 left-0 right-0 z-50 bg-bg-primary/80 backdrop-blur-xl border-t border-border-primary px-4 py-3 flex justify-around items-center md:hidden">
-        {(['vectorize', 'core lettering', 'monogram', 'image analyzer', 'chat'] as Tab[]).map((tab) => (
+      <nav className="fixed bottom-0 left-0 right-0 z-50 bg-bg-primary/80 backdrop-blur-xl border-t border-border-primary px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))] flex justify-around items-center md:hidden">
+        {(['vectorize', 'core lettering', 'logo design', 'image analyzer', 'chat'] as Tab[]).map((tab) => (
           <button
             key={tab}
-            onClick={() => {
-              setActiveTab(tab);
-              if (tab === 'core lettering' || tab === 'monogram') {
-                setSelectedModel('stability-ai');
-              } else {
-                setSelectedModel('gemini');
-              }
-              if (!(activeTab === 'image analyzer' && tab === 'vectorize')) {
-                setSelectedPreset(null);
-              }
-              setResultImage(null);
-              setError(null);
-            }}
+            onClick={() => handleTabChange(tab)}
             className={`flex flex-col items-center gap-1 text-[10px] font-bold uppercase tracking-widest transition-all ${activeTab === tab ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}
           >
             {tab === 'vectorize' && <ImageIcon size={20} className="mb-1" />}
             {tab === 'core lettering' && <TypeIcon size={20} className="mb-1" />}
-            {tab === 'monogram' && <Grid3X3 size={20} className="mb-1" />}
+            {tab === 'logo design' && <Aperture size={20} className="mb-1" />}
             {tab === 'image analyzer' && <Sparkles size={20} className="mb-1" />}
             {tab === 'chat' && <MessageCircle size={20} className="mb-1" />}
-            {tab === 'core lettering' ? 'Lettering' : tab === 'image analyzer' ? 'Analyzer' : tab}
+            {tab === 'core lettering' ? 'Lettering' : tab === 'image analyzer' ? 'Analyzer' : tab === 'logo design' ? 'Logo' : tab}
           </button>
         ))}
       </nav>
@@ -1149,6 +1426,7 @@ export default function App() {
           addLog('Visual captured via camera.', 'success');
         }}
       />
-    </div>
+      </div>
+    </PullToRefresh>
   );
 }

@@ -1,4 +1,4 @@
-import { modelRegistry, ModelInfo } from './modelRegistry';
+import { modelRegistry, ModelInfo, ImageModel } from './modelRegistry';
 
 class ModelValidationError extends Error {
   constructor(message: string) {
@@ -7,25 +7,17 @@ class ModelValidationError extends Error {
   }
 }
 
-export function validateModelCall(modelId: string, hfApiKey?: string, stabilityApiKey?: string, openaiApiKey?: string): ModelInfo {
-  const modelInfo = modelRegistry[modelId];
+export function validateModelCall(modelId: string, byteplusApiKey?: string): ModelInfo {
+  const modelInfo = modelRegistry[modelId as ImageModel];
 
   if (!modelInfo) {
     throw new ModelValidationError(`Model '${modelId}' is not registered.`);
   }
 
   if (modelInfo.requiresApiKey) {
-    if (modelInfo.provider === 'huggingface_api' && !hfApiKey) {
+    if (modelInfo.provider === 'byteplus' && !byteplusApiKey) {
       throw new ModelValidationError(
-        `Model '${modelId}' requires a Hugging Face API key. Please add it in Settings.`
-      );
-    } else if (modelInfo.provider === 'stability_ai' && !stabilityApiKey) {
-      throw new ModelValidationError(
-        `Model '${modelId}' requires a Stability AI API key. Please add it in Settings.`
-      );
-    } else if (modelInfo.provider === 'openai' && !openaiApiKey) {
-      throw new ModelValidationError(
-        `Model '${modelId}' requires an OpenAI API key. Please add it in Settings.`
+        `Model '${modelId}' requires a BytePlus API key. Please add it in Settings.`
       );
     }
   }
